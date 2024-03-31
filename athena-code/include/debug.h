@@ -1,5 +1,5 @@
-#ifndef DEFS_H
-#define DEFS_H
+#ifndef DEBUG_H
+#define DEBUG_H
 
 #define DEBUG 1
 
