@@ -5,6 +5,8 @@
 #include <TinyGPSPlus.h>
 #include "SD.h"
 #include "FS.h"
+#include "U8g2lib.h"
+#include "bitmaps.h"
 
 // create GPS object
 TinyGPSPlus gps;
@@ -24,16 +26,23 @@ typedef struct {
 } Location;
 
 Location location;
+int fix_status;
 
 /* array to hold scanned MAC addresses */
 mac_address seen_macs[MAX_NETWORKS];
 unsigned int seen_mac_index = 0;
 char data_row[100]; // to hold the row being written to SD Card
 
+/*OLED screen variables */
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C screen(/*R2: rotation 180*/U8G2_R0, /*reset*/U8X8_PIN_NONE, /* clock */ OLED_SCL, /* data */ OLED_SDA);
+unsigned int screen_counter = 0;
+int font_height = 10; // change the height if you change the font
+char nets[10]; // to hold number of networks found
+
 void configDynamicWIFI();
 void GPSInit();
 void updateSerial();
-void GPSDisplayInfo();
+int GPSGetLocation();
 void WiFiScanSetup();
 void seenMAC(mac_address);
 int compareMAC(mac_address, mac_address);
@@ -42,6 +51,54 @@ void SDInit();
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void appendFile(fs::FS &fs, const char * path, const char * message);
 String security_int_to_string(int security_type);
+void screenInit();
+void displayMessage(char*, int);
+void displaySplashScreen();
+
+/**
+ * @brief Initialize oled screen
+ * @param none
+*/
+void screenInit() {
+    screen.begin();
+    // screen.setColorIndex(1);   
+}
+
+/**
+ * show splash screen
+*/
+void displaySplashScreen() {
+  screen.firstPage();
+  do {
+    screen.drawBitmap(16, 17, 32/8, 32, logo);
+  } while (screen.nextPage());
+
+  // // some delay - does not hurt for this application
+  // delay(3000);
+
+  // // default terminal theme
+  // screen.setFont(u8g2_font_t0_13b_mf);
+  // screen.drawStr(0, 17, "athena>");
+}
+
+/**
+ * Display message on screen
+*/
+void displayMessage(char* message, int y) {
+
+  if(screen_counter > 5) {
+    screen_counter = 0;
+  } else { 
+    screen_counter++;
+  }
+
+  screen.setFont(u8g2_font_8x13_mf);
+  screen.firstPage();
+  do {
+    screen.drawStr(0, y, message);
+  } while (screen.nextPage());
+
+}
 
 /**
  * Initialize SD card
@@ -77,7 +134,6 @@ void SDInit() {
   file.close();
 
 }
-
 
 /**
  * Create a AP with SSID and PASSWORD to allow wifi connection to custom networks 
@@ -121,20 +177,18 @@ void updateSerial() {
   }
 }
 
-void GPSDisplayInfo() {
-  debug(F("Location: "));
+int GPSGetLocation() {
+  int f;
   if(gps.location.isValid()) {
-    debug(gps.location.lat());
     location.latitude = gps.location.lat();
-
-    debug(F(","));
-    Serial.print(gps.location.lng(), 6);
     location.longitude = gps.location.lng();
+    f = 1;
 
   } else {
-    debugln(F("Invalid coordinates"));
-
+    f = 0;
   }
+
+  return fix_status;
 
 }
 
@@ -254,16 +308,6 @@ void WiFiScanSetup() {
   delay(100);
 }
 
-/**
- * Scan all available wifi networks
-*/
-void scanWIFI(void* parameter) {
-  while(true) {
-    
-  }
-
-
-}
 
 
 // Write to the SD card (DON'T MODIFY THIS FUNCTION)
@@ -304,13 +348,18 @@ void setup() {
   Serial.begin(9600);
   // configDynamicWIFI();
   GPSInit();
-
   SDInit();
-
   WiFiScanSetup();
+  screenInit();
 
-  // print to screen
-  Serial.println("Ready..");
+  // must wait for GPS fix first
+  // while (!GPSGetLocation()) {
+  //   displayMessage("ath>Fixing..", font_height);
+  // }
+
+  // at this point GPS fix has been found
+  displayMessage("ath>GPS fixed", font_height*screen_counter+1);
+  displayMessage("ath>Ready..", font_height*screen_counter+1);
 
 }
 
@@ -318,22 +367,26 @@ void loop() {
 
   //updateSerial();
 
-  // while (Serial2.available() > 0) {
-  //   if (gps.encode(Serial2.read())) {
-  //     GPSDisplayInfo();
-  //   }
+  while (Serial2.available() > 0) {
+    if (gps.encode(Serial2.read())) {
+      GPSGetLocation();
+    }
   
-  // }
+  }
 
   int n = WiFi.scanNetworks();
-  debugln("Scan Done");
+  screen.clearDisplay();
+  displayMessage("ath>scanning", font_height*screen_counter+1);
+
+  sprintf(nets, "%s>%d", "ath", n);
 
   if(n == 0) {
     debugln("No networks found");
+    displayMessage("ath>O networks", font_height*screen_counter+1);
 
   } else {
-    debug(n);
-    debugln(" Networks found");
+    
+    displayMessage(nets, font_height*screen_counter+1);
 
     // process the scanned networks
     for(int i = 0; i < n; i++) {
@@ -370,11 +423,13 @@ void loop() {
       // debugln();
 
       sprintf(data_row,
-              "%s, %s, %d, %d \n\r",
+              "%s, %s, %d, %d, %.4f, %.4f \n\r",
               ssid.c_str(),
               security_int_to_string(WiFi.encryptionType(i)),
               WiFi.channel(i),
-              WiFi.RSSI(i)           
+              WiFi.RSSI(i),
+              location.latitude,
+              location.longitude          
       );
 
       debugln(data_row);

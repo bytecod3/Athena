@@ -11,4 +11,11 @@
 #define RAW_MAC_LENGTH 10
 #define MAX_NETWORKS 100
 
+/*==================OLED screen variables===================== */
+#define SCREEN_HEIGHT 64
+#define SCREEN_WIDTH 128
+#define YELLOW_OFFSET 16
+#define OLED_SDA 21
+#define OLED_SCL 22
+
 #endif
