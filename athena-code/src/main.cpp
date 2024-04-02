@@ -19,8 +19,8 @@ typedef struct {
 } mac_address;
 
 /* array to hold scanned MAC addresses */
-mac_address seenMACs[SCANNED_WIFI_LENGTH];
-int seenMAC_index = 0;
+mac_address seen_macs[MAX_NETWORKS];
+unsigned int seen_mac_index = 0;
 
 void configDynamicWIFI();
 void GPSInit();
@@ -30,6 +30,7 @@ void WiFiScanSetup();
 void seenMAC(mac_address);
 int compareMAC(mac_address, mac_address);
 void saveMAC();
+
 
 /**
  * Create a AP with SSID and PASSWORD to allow wifi connection to 
@@ -92,15 +93,20 @@ void GPSDisplayInfo() {
  * save mac address to array
 */ 
 void saveMAC(unsigned char* mac_addr) {
-  mac_address tmp;
-
-  for (int j=0; j < RAW_BSSID_LENGTH; j++) {
-    tmp.bytes[j] = mac_addr[j];
+  
+  // prevent index from falling out of range
+  if(seen_mac_index > MAX_NETWORKS) {
+    seen_mac_index = 0;
   }
 
-  seenMACs[seenMAC_index] = tmp;
-  seenMAC_index++;
-  debug("MAC len: "); debugln(seenMAC_index);
+  mac_address tmp;
+  for(int i=0; i<6; i++) {
+    tmp.bytes[i] = mac_addr[i];
+  }
+
+  seen_macs[seen_mac_index] = tmp;
+  seen_mac_index++;
+  debug("MAC LEN: "); debugln(seen_mac_index);
 
 }
 
@@ -108,7 +114,8 @@ void saveMAC(unsigned char* mac_addr) {
  * return true if a MAC address has been seen 
 */
 int seenMAC(unsigned char* mac_addr) {
-  serial.println()
+  Serial.println();
+
   mac_address tmp;
 
   // copy mac_addr into tmp
@@ -116,8 +123,8 @@ int seenMAC(unsigned char* mac_addr) {
     tmp.bytes[i] =  mac_addr[i];
   }
 
-  for(int i = 0; i < SCANNED_WIFI_LENGTH; i++) {
-    if(compareMAC(tmp, seenMACs[i])) {
+  for(int i = 0; i < MAX_NETWORKS; i++) {
+    if(compareMAC(tmp, seen_macs[i])) {
       return 1;
     }
   }
@@ -130,9 +137,10 @@ int seenMAC(unsigned char* mac_addr) {
  * Compare mac addresses to avoid logging sasme network twice
  * return true if 2 MAC addresses are the same
 */
-int compareMAC(mac_address addr1, mac_address addr2) {
-  for (int i=0; i < 6; i++) {
-    if(addr1.bytes[i] != addr2.bytes[i]) {
+int compareMAC(mac_address mac1, mac_address mac2) {
+
+  for(int i=0; i < RAW_BSSID_LENGTH; i++) {
+    if(mac1.bytes[i] != mac2.bytes[i]) {
       return 0;
     }
   }
@@ -178,49 +186,49 @@ void scanWIFI(void* parameter) {
         );
 
         if(seenMAC(raw_bssid)) {
-          // continue;
           debugln("This network seen");
+          continue;
+          
         }
 
-        // saveMAC(raw_bssid);
+        saveMAC(raw_bssid);
 
-    
-        // // print network details
-        // debug(i); debug(","); debugf("%d",raw_bssid); debug(","); debug(WiFi.SSID(i).c_str());
-        // debug(","); debugf("%4d", WiFi.RSSI(i));
-        // debug(","); debugf("%2d", WiFi.channel(i)); debug(",");
+        // print network details
+        debug(i); debug(","); debugf("%d",raw_bssid); debug(","); debug(WiFi.SSID(i).c_str());
+        debug(","); debugf("%4d", WiFi.RSSI(i));
+        debug(","); debugf("%2d", WiFi.channel(i)); debug(",");
         
-        // switch (WiFi.encryptionType(i)) {
-        //   case WIFI_AUTH_OPEN:
-        //         debug("OPEN");
-        //         break;
-        //     case WIFI_AUTH_WEP:
-        //         debug("WEP");
-        //         break;
-        //     case WIFI_AUTH_WPA_PSK:
-        //         debug("WPA");
-        //         break;
-        //     case WIFI_AUTH_WPA2_PSK:
-        //         debug("WPA2");
-        //         break;
-        //     case WIFI_AUTH_WPA_WPA2_PSK:
-        //         Serial.print("WPA+WPA2");
-        //         break;
-        //     case WIFI_AUTH_WPA2_ENTERPRISE:
-        //         debug("WPA2-EAP");
-        //         break;
-        //     case WIFI_AUTH_WPA3_PSK:
-        //         debug("WPA3");
-        //         break;
-        //     case WIFI_AUTH_WPA2_WPA3_PSK:
-        //         debug("WPA2+WPA3");
-        //         break;
-        //     case WIFI_AUTH_WAPI_PSK:
-        //         debug("WAPI");
-        //         break;
-        //     default:
-        //         debug("unknown");
-        // }
+        switch (WiFi.encryptionType(i)) {
+          case WIFI_AUTH_OPEN:
+                debug("OPEN");
+                break;
+            case WIFI_AUTH_WEP:
+                debug("WEP");
+                break;
+            case WIFI_AUTH_WPA_PSK:
+                debug("WPA");
+                break;
+            case WIFI_AUTH_WPA2_PSK:
+                debug("WPA2");
+                break;
+            case WIFI_AUTH_WPA_WPA2_PSK:
+                Serial.print("WPA+WPA2");
+                break;
+            case WIFI_AUTH_WPA2_ENTERPRISE:
+                debug("WPA2-EAP");
+                break;
+            case WIFI_AUTH_WPA3_PSK:
+                debug("WPA3");
+                break;
+            case WIFI_AUTH_WPA2_WPA3_PSK:
+                debug("WPA2+WPA3");
+                break;
+            case WIFI_AUTH_WAPI_PSK:
+                debug("WAPI");
+                break;
+            default:
+                debug("unknown");
+        }
 
         debugln();
 
@@ -229,11 +237,7 @@ void scanWIFI(void* parameter) {
     }
   }
 
-  // free memory
-  WiFi.scanDelete();
 
-  // some delay before scanning again
-  delay(SCAN_DELAY);
 }
 
 void setup() {
@@ -269,8 +273,5 @@ void loop() {
   
   // }
 
-  for(int i = 0; i < seenMAC_index; i++) {
-      debugf("%d", seenMACs[i]);
-  }
 
 }
