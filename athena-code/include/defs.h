@@ -17,5 +17,12 @@
 #define YELLOW_OFFSET 16
 #define OLED_SDA 21
 #define OLED_SCL 22
+#define PIX_OFFSET 2
+
+#define LED_PIN 12
+#define RESET_BUTTON_PIN 13
+#define BLINK_INTERVAL 400
+#define DEBOUNCE_INTERVAL 50
+#define SCAN_INTERVAL 2000
 
 #endif

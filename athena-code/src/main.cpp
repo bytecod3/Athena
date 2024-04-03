@@ -33,11 +33,26 @@ mac_address seen_macs[MAX_NETWORKS];
 unsigned int seen_mac_index = 0;
 char data_row[100]; // to hold the row being written to SD Card
 
+/* wifi scanning variables */
+unsigned long current_scan_time = 0;
+unsigned long previous_scan_time = 0;
+
 /*OLED screen variables */
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C screen(/*R2: rotation 180*/U8G2_R0, /*reset*/U8X8_PIN_NONE, /* clock */ OLED_SCL, /* data */ OLED_SDA);
-unsigned int screen_counter = 0;
+unsigned int screen_counter = 1;
 int font_height = 10; // change the height if you change the font
 char nets[10]; // to hold number of networks found
+
+/* reset button handler */
+unsigned long int button_previous_time = 0;
+unsigned long int button_current_time;
+int current_button_state = 0;
+int previous_button_state;
+int reading;
+
+/* LED variables*/
+int led_state = 1;
+unsigned long int previous_blink_time = 0;
 
 void configDynamicWIFI();
 void GPSInit();
@@ -52,8 +67,17 @@ void writeFile(fs::FS &fs, const char * path, const char * message);
 void appendFile(fs::FS &fs, const char * path, const char * message);
 String security_int_to_string(int security_type);
 void screenInit();
-void displayMessage(char*, int);
+void displayMessage(char*);
 void displaySplashScreen();
+void resetDevice();
+void scanWIFI();
+
+/**
+ * delete the files logges to SD card before GPS fix was found
+*/
+void resetDevice() {
+  ESP.restart();
+}
 
 /**
  * @brief Initialize oled screen
@@ -84,18 +108,13 @@ void displaySplashScreen() {
 /**
  * Display message on screen
 */
-void displayMessage(char* message, int y) {
-
-  if(screen_counter > 5) {
-    screen_counter = 0;
-  } else { 
-    screen_counter++;
-  }
-
+void displayMessage(char* message) {
+ 
   screen.setFont(u8g2_font_8x13_mf);
+
   screen.firstPage();
   do {
-    screen.drawStr(0, y, message);
+    screen.drawStr(0, SCREEN_HEIGHT/2 - 5, message);
   } while (screen.nextPage());
 
 }
@@ -177,19 +196,20 @@ void updateSerial() {
   }
 }
 
+/**
+ * get the GPS coordinates 
+*/
 int GPSGetLocation() {
-  int f;
+  
   if(gps.location.isValid()) {
     location.latitude = gps.location.lat();
     location.longitude = gps.location.lng();
-    f = 1;
+    return 1;
 
   } else {
-    f = 0;
+    
+    return 0;
   }
-
-  return fix_status;
-
 }
 
 /**
@@ -298,6 +318,7 @@ String security_int_to_string(int security_type){
   }
 
   return authtype;
+
 }
 
 
@@ -308,6 +329,85 @@ void WiFiScanSetup() {
   delay(100);
 }
 
+
+/**
+ * Scan for WIFI networks
+*/
+void scanWIFI(void* parameter) {
+  while(1) {
+
+    // get GPS data
+    while (Serial2.available() > 0) {
+      if (gps.encode(Serial2.read())) {
+        GPSGetLocation();
+      }
+    }
+    
+    int n = WiFi.scanNetworks();
+    sprintf(nets, "%s>%d found", "ath", n);
+
+    if(n == 0) {
+      debugln("No networks found");
+
+    } else {
+      
+      // process the scanned networks
+      for(int i = 0; i < n; i++) {
+        uint8_t* raw_bssid = WiFi.BSSID(i);
+        char bssid[18];
+        sprintf(
+          bssid,
+          "%02X:%02X:%02X:%02X:%02X:%02X",
+          raw_bssid[0],
+          raw_bssid[1],
+          raw_bssid[2],
+          raw_bssid[3],
+          raw_bssid[4],
+          raw_bssid[5]
+        );
+
+        if(seenMAC(raw_bssid)) {
+          debugln("This network seen");
+          continue;
+        }
+
+        saveMAC(raw_bssid);
+        String ssid = WiFi.SSID(i);
+        sprintf(data_row,
+                "%s, %s, %d, %d, %.4f, %.4f \n\r",
+                ssid.c_str(),
+                security_int_to_string(WiFi.encryptionType(i)),
+                WiFi.channel(i),
+                WiFi.RSSI(i),
+                location.latitude,
+                location.longitude          
+        );
+
+        debugln(data_row);
+
+        // log to SD card
+        appendFile(SD, "/log.txt", data_row);
+        
+        // update screen
+
+        screen.setFont(u8g2_font_8x13_mf);
+
+        screen.firstPage();
+        do {
+          screen.drawStr(0, 12, "ath>Init...");
+          screen.drawStr(0, 24, "ath>Scanning...");
+          screen.drawStr(0, 36, "ath>Scan done...");
+          screen.drawStr(0, 48, nets);
+          screen.drawStr(0, 60, "ath>Ready...");
+        } while (screen.nextPage());
+
+      }
+
+    }
+
+    WiFi.scanDelete();
+  }
+}
 
 
 // Write to the SD card (DON'T MODIFY THIS FUNCTION)
@@ -352,96 +452,64 @@ void setup() {
   WiFiScanSetup();
   screenInit();
 
-  // must wait for GPS fix first
-  // while (!GPSGetLocation()) {
-  //   displayMessage("ath>Fixing..", font_height);
-  // }
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(RESET_BUTTON_PIN, INPUT);
 
-  // at this point GPS fix has been found
-  displayMessage("ath>GPS fixed", font_height*screen_counter+1);
-  displayMessage("ath>Ready..", font_height*screen_counter+1);
+  // create WIFI scan task
+  xTaskCreatePinnedToCore(
+    scanWIFI,
+    "scanWIFI",
+    100000,
+    NULL,
+    1,
+    NULL,
+    0
+  );
 
 }
 
 void loop() {
 
-  //updateSerial();
+  // scan for WIFI
+  // current_scan_time = millis();
+  // if( current_scan_time - previous_scan_time > SCAN_INTERVAL ) {
 
-  while (Serial2.available() > 0) {
-    if (gps.encode(Serial2.read())) {
-      GPSGetLocation();
-    }
-  
+  //   scanWIFI();
+
+  //   previous_scan_time = current_scan_time;
+  // }
+
+  // LED button blink 
+  if(millis() - previous_blink_time > BLINK_INTERVAL) {
+    led_state = !led_state;
+
+    previous_blink_time = millis();
   }
 
-  int n = WiFi.scanNetworks();
-  screen.clearDisplay();
-  displayMessage("ath>scanning", font_height*screen_counter+1);
+  // toggle the LED
+  digitalWrite(LED_PIN, led_state);
 
-  sprintf(nets, "%s>%d", "ath", n);
+  // debounce reset button
+  reading = digitalRead(RESET_BUTTON_PIN);
+  button_current_time = millis();
+  debugln(reading);
+  if(button_current_time - button_previous_time > DEBOUNCE_INTERVAL) {
+    // if button state has changed
+    if(current_button_state != previous_button_state) {
+      current_button_state = reading;
 
-  if(n == 0) {
-    debugln("No networks found");
-    displayMessage("ath>O networks", font_height*screen_counter+1);
-
-  } else {
-    
-    displayMessage(nets, font_height*screen_counter+1);
-
-    // process the scanned networks
-    for(int i = 0; i < n; i++) {
-      uint8_t* raw_bssid = WiFi.BSSID(i);
-      char bssid[18];
-      sprintf(
-        bssid,
-        "%02X:%02X:%02X:%02X:%02X:%02X",
-        raw_bssid[0],
-        raw_bssid[1],
-        raw_bssid[2],
-        raw_bssid[3],
-        raw_bssid[4],
-        raw_bssid[5]
-      );
-
-      if(seenMAC(raw_bssid)) {
-        debugln("This network seen");
-        continue;
-      }
-
-      saveMAC(raw_bssid);
-
-      String ssid = WiFi.SSID(i);
-
-      // log to file 
-      // debug(WiFi.SSID(i)); 
-      // debug(",");
-      // debug(WiFi.RSSI(i));
-      // debug(","); 
-      // debug(security_int_to_string(WiFi.encryptionType(i)));
-      // debug(","); 
-      // debug(WiFi.channel(i));
-      // debugln();
-
-      sprintf(data_row,
-              "%s, %s, %d, %d, %.4f, %.4f \n\r",
-              ssid.c_str(),
-              security_int_to_string(WiFi.encryptionType(i)),
-              WiFi.channel(i),
-              WiFi.RSSI(i),
-              location.latitude,
-              location.longitude          
-      );
-
-      debugln(data_row);
-
-      // log to SD card
-      appendFile(SD, "/log.txt", data_row);
+      // reset the device 
+      resetDevice();
 
     }
 
   }
 
-  WiFi.scanDelete();
-
+  // update the button's last reading 
+  previous_button_state = reading;
 
 }
+
+/** 
+ * THE END!
+*/
