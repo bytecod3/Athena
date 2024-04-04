@@ -492,7 +492,7 @@ void loop() {
   // debounce reset button
   reading = digitalRead(RESET_BUTTON_PIN);
   button_current_time = millis();
-  debugln(reading);
+  
   if(button_current_time - button_previous_time > DEBOUNCE_INTERVAL) {
     // if button state has changed
     if(current_button_state != previous_button_state) {
@@ -500,6 +500,7 @@ void loop() {
 
       // reset the device 
       resetDevice();
+      debugln("PRESSED");
 
     }
 
